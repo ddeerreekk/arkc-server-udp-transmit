@@ -6,30 +6,15 @@ import ipaddress
 import pyotp
 import argparse
 import json
+import logging
 from Crypto.PublicKey import RSA
 from hashlib import sha1
-
-parser = argparse.ArgumentParser()
-parser.add_argument('-c', '--config', dest="config", default='config.json')
-args = parser.parse_args()
 
 MAX_SALT_BUFFER = 255
 certs = dict()
 recentsalt=[]
-
-data_file = open(args.config)
-data = json.load(data_file)
-data_file.close()
-
-try:
-        with open(data["remote_cert_path"], "r") as f:
-            remote_cert_txt = f.read()
-            remote_cert = RSA.importKey(remote_cert_txt)
-            certs[sha1(remote_cert_txt).hexdigest()] = [remote_cert, "da39a3ee5e6b4b0d3255bfef95601890afd80709"]
-except Exception as err:
-    print ("Fatal error while loading client certificate.")
-    print (err)
-    quit()
+DEFAULT_REMOTE_HOST = "0.0.0.0"
+DEFAULT_REMOTE_PORT = 8000
 
 def decode(data):
     msg=''
@@ -56,7 +41,7 @@ def decrypt_udp_msg(msg1, msg2, msg3, msg4, msg5):
             salt
             Total length is 2 + 4 + 40 = 46, 16, 16, ?, 16
         """
-        global recentsalt,certs
+        global recentsalt,certs,MAX_SALT_BUFFER
         assert len(msg1) == 46
 
         if msg5 in recentsalt:
@@ -74,10 +59,33 @@ def decrypt_udp_msg(msg1, msg2, msg3, msg4, msg5):
             recentsalt.pop(0)
         recentsalt.append(msg5)
         return main_pw, client_sha1, number, remote_port, remote_ip
-
-s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-s.bind(('',53))
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-c', '--config', dest="config", default='config.json')
+    args = parser.parse_args()
+
+    try:
+        data_file = open(args.config)
+        data = json.load(data_file)
+        data_file.close()
+    except Exception as err:
+        logging.error("Fatal error while loading configuration file.\n" + str(err))
+        quit()
+
+
+    try:
+        for client in data["clients"]:
+            with open(client[0], "r") as f:
+                remote_cert_txt = f.read()
+                remote_cert = RSA.importKey(remote_cert_txt)
+                certs[sha1(remote_cert_txt).hexdigest()] = [remote_cert, client[1]]
+    except Exception as err:
+        print ("Fatal error while loading client certificate.")
+        print (err)
+        quit()
+
+    s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+    s.bind(('',53))
     while 1:
         msg,addr = s.recvfrom(2048)
         msg=decode(msg)
